@@ -1,3 +1,7 @@
+
+# Got from Rev robotics and ported into python
+# https://docs.revrobotics.com/sparkmax/operating-modes/closed-loop-control
+
 class PidController:
     def __init__(self, kP, kI, kD, kF, kIZone, kMaxOutput):
         self.kP = kP

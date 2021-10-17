@@ -281,13 +281,13 @@ class Node:
                 self.updater.update()
             r_time.sleep()
 
-    def cmd_arm_callback(self, twist):
+    def cmd_arm_callback(self, pose):
         self.last_set_speed_time = rospy.get_rostime()
 
         encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
         gearReduction = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # CONSTANT
 
-        jointAngles = inverseKinematics(twist)
+        jointAngles = inverseKinematics(pose)
 
         gravityCompVolts = gravityCompensation(jointAngles)
         
@@ -299,18 +299,22 @@ class Node:
             i = 0
             try:
                 with self.mutex:
-                    setpoint1 = (jointAngles[i] / (2*pi)) * encoderTicksPerRotation * gearReduction[i]
-                    feedback1 = 0   # GET ENCODER VALUE FROM ROBOCLAW
+                    encoderCount1 = self.roboclaw.ReadEncM1(address)
+                    encoderCount2 = self.roboclaw.ReadEncM2(address)
+
+                    setpoint1 = (jointAngles[i])
+                    feedback1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]  # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
                     voltage1 = self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
 
                     setpoint2 = (jointAngles[i+1] / (2*pi)) * encoderTicksPerRotation * gearReduction[i+1]
-                    feedback2 = 0   # GET ENCODER VALUE FROM ROBOCLAW
+                    feedback2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]   # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
                     voltage2 = self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
 
                     # Convert voltage to duty cycle. 
                     # MainBatteryVoltage/10 to get voltage. 32767 is 100% duty cycle
-                    dutyCycle1 = voltage1 / (self.roboclaw.ReadMainBatteryVoltage / 10) * 32767
-                    dutyCycle2 = voltage2 / (self.roboclaw.ReadMainBatteryVoltage / 10) * 32767
+                    mainBatteryVoltage = self.roboclaw.ReadMainBatteryVoltage(address)
+                    dutyCycle1 = voltage1 / (mainBatteryVoltage / 10) * 32767
+                    dutyCycle2 = voltage2 / (mainBatteryVoltage / 10) * 32767
 
                     self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
             except OSError as e:
