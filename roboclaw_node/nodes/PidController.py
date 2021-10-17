@@ -9,6 +9,13 @@ class PidController:
         self.prevErr = 0
         self.kMaxOutput = kMaxOutput
 
+    def setPIDValues(self, kP, kI, kD, kF, kIZone, kMaxOutput):
+        self.kP = kP
+        self.kI = kI
+        self.kD = kD
+        self.kF = kF
+        self.kIZone = kIZone
+        self.kMaxOutput = kMaxOutput
 
     def calculate(self, setpoint, feedback, arbFF):
         # Error

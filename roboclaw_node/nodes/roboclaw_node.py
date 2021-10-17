@@ -5,12 +5,16 @@ from functools import partial
 
 import diagnostic_msgs
 import diagnostic_updater
+from nodes.PidController import PidController
 from roboclaw_driver.roboclaw_driver import Roboclaw
 import rospy
 import tf
 from geometry_msgs.msg import Quaternion, Twist
 from nav_msgs.msg import Odometry
 from numbers import Number
+
+from ArmKinematics import inverseKinematics
+from GravityCompensation import gravityCompensation
 
 __author__ = "bwbazemore@uga.edu (Brad Bazemore)"
 
@@ -148,6 +152,15 @@ class Node:
                        0x01000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Speed Error Limit"),
                        0x02000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Position Error Limit")}
 
+        # Defining stuff
+        self.pidControllers = [PidController(),
+                            PidController(),
+                            PidController(),
+                            PidController(),
+                            PidController(),
+                            PidController()]
+
+
         rospy.init_node("roboclaw_node")
         rospy.on_shutdown(self.shutdown)
         rospy.loginfo("Connecting to roboclaw")
@@ -268,33 +281,38 @@ class Node:
                 self.updater.update()
             r_time.sleep()
 
-    def cmd_vel_callback(self, twist):
+    def cmd_arm_callback(self, twist):
         self.last_set_speed_time = rospy.get_rostime()
 
-        linear_x = twist.linear.x
-        if linear_x > self.MAX_SPEED:
-            linear_x = self.MAX_SPEED
-        if linear_x < -self.MAX_SPEED:
-            linear_x = -self.MAX_SPEED
+        encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
+        gearReduction = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # CONSTANT
 
-        vr = linear_x + twist.angular.z * self.BASE_WIDTH / 2.0  # m/s
-        vl = linear_x - twist.angular.z * self.BASE_WIDTH / 2.0
+        jointAngles = inverseKinematics(twist)
 
-        vr_ticks = int(vr * self.TICKS_PER_METER)  # ticks/s
-        vl_ticks = int(vl * self.TICKS_PER_METER)
+        gravityCompVolts = gravityCompensation(jointAngles)
+        
 
-        rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
+        # rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
 
-        for address in self.addresses:
+        for address in self.addresses: # NEED A DIFFERENT WAY TO SELECT MOTORS
+            #TEMPORARY
+            i = 0
             try:
-                # This is a hack way to keep a poorly tuned PID from making noise at speed 0
-                if vr_ticks is 0 and vl_ticks is 0:
-                    with self.mutex:
-                        self.roboclaw.ForwardM1(address, 0)
-                        self.roboclaw.ForwardM2(address, 0)
-                else:
-                    with self.mutex:
-                        self.roboclaw.SpeedM1M2(address, vr_ticks, vl_ticks)
+                with self.mutex:
+                    setpoint1 = (jointAngles[i] / (2*pi)) * encoderTicksPerRotation * gearReduction[i]
+                    feedback1 = 0   # GET ENCODER VALUE FROM ROBOCLAW
+                    voltage1 = self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
+
+                    setpoint2 = (jointAngles[i+1] / (2*pi)) * encoderTicksPerRotation * gearReduction[i+1]
+                    feedback2 = 0   # GET ENCODER VALUE FROM ROBOCLAW
+                    voltage2 = self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
+
+                    # Convert voltage to duty cycle. 
+                    # MainBatteryVoltage/10 to get voltage. 32767 is 100% duty cycle
+                    dutyCycle1 = voltage1 / (self.roboclaw.ReadMainBatteryVoltage / 10) * 32767
+                    dutyCycle2 = voltage2 / (self.roboclaw.ReadMainBatteryVoltage / 10) * 32767
+
+                    self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
             except OSError as e:
                 rospy.logwarn(f"[{address}] SpeedM1M2 OSError: {e.errno}")
                 rospy.logdebug(e)
