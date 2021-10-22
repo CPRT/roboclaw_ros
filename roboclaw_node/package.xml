@@ -47,7 +47,7 @@
   <depend>tf</depend>
   <depend>diagnostic_updater</depend>
   <depend>diagnostic_aggregator</depend>
-  <depend>python-serial</depend>
+  <depend>python3-serial</depend>
 
 
   <!-- The export tag contains other, unspecified, tags -->
