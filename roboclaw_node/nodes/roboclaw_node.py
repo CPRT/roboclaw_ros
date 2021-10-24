@@ -167,7 +167,8 @@ class Node:
         dev_name = rospy.get_param("~dev", "/dev/ttyACM0")
         baud_rate = int(rospy.get_param("~baud", "19200"))
 
-        self.addresses = [int(addr) for addr in rospy.get_param("~addresses", "128,129,130").split(",")]
+        self.addresses = [int(addr) for addr in rospy.get_param("~addresses", "131,132,133").split(",")]
+
         if any((addr > 0x87 or addr < 0x80 for addr in self.addresses)):
             rospy.logfatal("Address out of range")
             rospy.signal_shutdown("Address out of range")
@@ -294,8 +295,7 @@ class Node:
 
         # rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
 
-        for address in self.addresses: # NEED A DIFFERENT WAY TO SELECT MOTORS
-            #TEMPORARY
+        for address in self.addresses:
             i = 0
             try:
                 with self.mutex:
@@ -319,7 +319,8 @@ class Node:
                     self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
             except OSError as e:
                 rospy.logwarn(f"[{address}] SpeedM1M2 OSError: {e.errno}")
-                rospy.logdebug(e)
+                rospy.logdebug(e) 
+                #TODO: add more error tracking for each roboclaw call
 
     # TODO: Need to make this work when more than one error is raised
     def check_vitals(self, stat, address):
