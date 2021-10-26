@@ -152,13 +152,21 @@ class Node:
                        0x01000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Speed Error Limit"),
                        0x02000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Position Error Limit")}
 
+        # 
         # Defining stuff
+        #
+        
+        # Tunable constants of PID, should be live tunable
         self.pidControllers = [PidController(),
                             PidController(),
                             PidController(),
                             PidController(),
                             PidController(),
                             PidController()]
+
+        # Effects the influence of gravity comp on the arms, should be live tunable
+        self.gravityCompNewtonMetersToVoltage = 0
+
 
 
         rospy.init_node("roboclaw_node")
@@ -286,41 +294,56 @@ class Node:
         self.last_set_speed_time = rospy.get_rostime()
 
         encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
-        gearReduction = 0.0, 0.0, 0.0, 0.0, 0.0, 0.0 # CONSTANT
+        gearReduction = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
+        invertMotorDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
+        invertEncoderDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
+        maxVoltage = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
+        maxMotorAngle = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
+        minMotorAngle = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
 
-        jointAngles = inverseKinematics(pose)
+        additionalMassOnEndEffector = 0 # Need to figure out how to make this an input
 
-        gravityCompVolts = gravityCompensation(jointAngles)
+        motorAngles = inverseKinematics(pose)
+
+        # Ensure values calculated do not go beyond mechanical endstops
+        i = 0
+        for angle in motorAngles:
+            angle = self.clampValue(angle, minMotorAngle[i], maxMotorAngle[i])
+            i += 1
+
+
+        gravityCompVolts = gravityCompensation(motorAngles, additionalMassOnEndEffector, self.gravityCompNewtonMetersToVoltage)
         
 
         # rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
-
+        i = 0
         for address in self.addresses:
-            i = 0
             try:
                 with self.mutex:
-                    encoderCount1 = self.roboclaw.ReadEncM1(address)
-                    encoderCount2 = self.roboclaw.ReadEncM2(address)
+                    encoderCount1 = self.roboclaw.ReadEncM1(address) * invertEncoderDirection[i]
+                    encoderCount2 = self.roboclaw.ReadEncM2(address) * invertEncoderDirection[i+1]
 
-                    setpoint1 = (jointAngles[i])
+                    setpoint1 = motorAngles[i]
                     feedback1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]  # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
-                    voltage1 = self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
+                    voltage1 = (self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
+                                * invertMotorDirection[i])
 
-                    setpoint2 = (jointAngles[i+1] / (2*pi)) * encoderTicksPerRotation * gearReduction[i+1]
+                    setpoint2 = motorAngles[i+1]
                     feedback2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]   # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
-                    voltage2 = self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
+                    voltage2 = (self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
+                                * invertMotorDirection[i+1])
 
-                    # Convert voltage to duty cycle. 
-                    # MainBatteryVoltage/10 to get voltage. 32767 is 100% duty cycle
-                    mainBatteryVoltage = self.roboclaw.ReadMainBatteryVoltage(address)
-                    dutyCycle1 = voltage1 / (mainBatteryVoltage / 10) * 32767
-                    dutyCycle2 = voltage2 / (mainBatteryVoltage / 10) * 32767
+                    voltage1 = self.clampVoltage(voltage1, -maxVoltage[i], maxVoltage[i])
+                    voltage2 = self.clampVoltage(voltage2, -maxVoltage[i+1], maxVoltage[i+1])
 
-                    self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
+                    self.setRoboclawVoltage(self.roboclaw, address, voltage1, voltage2)
+                    
             except OSError as e:
                 rospy.logwarn(f"[{address}] SpeedM1M2 OSError: {e.errno}")
                 rospy.logdebug(e) 
                 #TODO: add more error tracking for each roboclaw call
+
+            i += 1
 
     # TODO: Need to make this work when more than one error is raised
     def check_vitals(self, stat, address):
@@ -360,6 +383,30 @@ class Node:
                     rospy.logerr(f"[{address}] Could not shutdown motors!!!!")
                     rospy.logdebug(e)
 
+    # 
+    # Helper methods
+    # 
+
+    # Clamp the voltage so it doesn't exceed a given max value
+    def clampValue(self, value, minValue, maxValue):
+        if (value > maxValue):
+            return maxValue
+        elif (value < minValue):
+            return minValue
+
+        return value
+
+    # Convert voltage to dutycycle and pass on to both motors attached to the roboclaw
+    def setRoboclawVoltage(self, roboclaw:Roboclaw, address:int, voltage1, voltage2):
+
+        # MainBatteryVoltage/10 to get volts. 32767 is 100% duty cycle
+        mainBatteryVoltage = roboclaw.ReadMainBatteryVoltage(address)
+        dutyCycle1 = voltage1 / (mainBatteryVoltage / 10) * 32767
+        dutyCycle2 = voltage2 / (mainBatteryVoltage / 10) * 32767
+
+        roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
+
+
 
 if __name__ == "__main__":
     try:
@@ -368,3 +415,39 @@ if __name__ == "__main__":
     except rospy.ROSInterruptException:
         pass
     rospy.loginfo("Exiting")
+
+
+
+
+
+
+
+
+
+
+
+"""
+IDEA/TODO
+
+1. Subscribe to a topic to update PID values and gravity comp value
+2. ~~DONE~~Write gravity comp
+3. Organize constants
+4. Create a spreadsheet of all constants
+5. Define the PidControllers with values in rospy.param
+6. Replace drivetrain odometry with arm forward kinematics
+7. ~~DONE~~ Add a way to cap the output of the pid controller (currently could ask the roboclaw for >100% duty cycle)
+8. Add a way to send a voltage value to a motor (for testing and tuning)
+                ~~DONE~~Move the voltage math from the cmd_arm_callback into a method so both can use it
+9. Create a control logic for the arm. Disabled, Home, SetVoltages, SetPose 
+                Home: Go to a nice position to turn off at
+10. Add a system to check that the values from inverse kinematics are within the range of the hardware
+11. Subscribe to a topic to send voltage values to the roboclaws
+12. Create soft limits. If the motor is outside a soft limit and moving in a direction farther away then prevent the motor
+                from moving (set duty cycle to 0).
+13. Create a safety feature so that if a the cmd_arm topic or cmd_arm_voltage topic are not given a value within 0.5s, 
+                stop the motor from moving (duty cycle to 0)
+14. Modify the end effector angles based on the turret angle
+
+
+
+"""
