@@ -9,7 +9,7 @@ from nodes.PidController import PidController
 from roboclaw_driver.roboclaw_driver import Roboclaw
 import rospy
 import tf
-from geometry_msgs.msg import Quaternion, Twist
+from geometry_msgs.msg import Quaternion, Twist, Pose
 from nav_msgs.msg import Odometry
 from numbers import Number
 
@@ -20,109 +20,6 @@ __author__ = "bwbazemore@uga.edu (Brad Bazemore)"
 
 
 # TODO need to find some better was of handling OSerror 11 or preventing it, any ideas?
-
-class EncoderOdom:
-    def __init__(self, ticks_per_meter, base_width):
-        self.TICKS_PER_METER = ticks_per_meter
-        self.BASE_WIDTH = base_width
-        self.odom_pub = rospy.Publisher('/odom', Odometry, queue_size=10)
-        self.cur_x = 0
-        self.cur_y = 0
-        self.cur_theta = 0.0
-        self.last_enc_left = 0
-        self.last_enc_right = 0
-        self.last_enc_time = rospy.Time.now()
-
-    @staticmethod
-    def normalize_angle(angle):
-        while angle > pi:
-            angle -= 2.0 * pi
-        while angle < -pi:
-            angle += 2.0 * pi
-        return angle
-
-    def update(self, enc_left, enc_right):
-        left_ticks = enc_left - self.last_enc_left
-        right_ticks = enc_right - self.last_enc_right
-        self.last_enc_left = enc_left
-        self.last_enc_right = enc_right
-
-        dist_left = left_ticks / self.TICKS_PER_METER
-        dist_right = right_ticks / self.TICKS_PER_METER
-        dist = (dist_right + dist_left) / 2.0
-
-        current_time = rospy.Time.now()
-        d_time = (current_time - self.last_enc_time).to_sec()
-        self.last_enc_time = current_time
-
-        # TODO find better what to determine going straight, this means slight deviation is accounted
-        if left_ticks == right_ticks:
-            d_theta = 0.0
-            self.cur_x += dist * cos(self.cur_theta)
-            self.cur_y += dist * sin(self.cur_theta)
-        else:
-            d_theta = (dist_right - dist_left) / self.BASE_WIDTH
-            r = dist / d_theta
-            self.cur_x += r * (sin(d_theta + self.cur_theta) - sin(self.cur_theta))
-            self.cur_y -= r * (cos(d_theta + self.cur_theta) - cos(self.cur_theta))
-            self.cur_theta = self.normalize_angle(self.cur_theta + d_theta)
-
-        if abs(d_time) < 0.000001:
-            vel_x = 0.0
-            vel_theta = 0.0
-        else:
-            vel_x = dist / d_time
-            vel_theta = d_theta / d_time
-
-        return vel_x, vel_theta
-
-    def update_publish(self, enc_left, enc_right):
-        # 2106 per 0.1 seconds is max speed, error in the 16th bit is 32768
-        # TODO lets find a better way to deal with this error
-        if abs(enc_left - self.last_enc_left) > 20000:
-            rospy.logerr("Ignoring left encoder jump: cur %d, last %d" % (enc_left, self.last_enc_left))
-        elif abs(enc_right - self.last_enc_right) > 20000:
-            rospy.logerr("Ignoring right encoder jump: cur %d, last %d" % (enc_right, self.last_enc_right))
-        else:
-            vel_x, vel_theta = self.update(enc_left, enc_right)
-            self.publish_odom(self.cur_x, self.cur_y, self.cur_theta, vel_x, vel_theta)
-
-    def publish_odom(self, cur_x, cur_y, cur_theta, vx, vth):
-        quat = tf.transformations.quaternion_from_euler(0, 0, cur_theta)
-        current_time = rospy.Time.now()
-
-        br = tf.TransformBroadcaster()
-        br.sendTransform((cur_x, cur_y, 0),
-                         tf.transformations.quaternion_from_euler(0, 0, cur_theta),
-                         current_time,
-                         "base_link",
-                         "odom")
-
-        odom = Odometry()
-        odom.header.stamp = current_time
-        odom.header.frame_id = 'odom'
-
-        odom.pose.pose.position.x = cur_x
-        odom.pose.pose.position.y = cur_y
-        odom.pose.pose.position.z = 0.0
-        odom.pose.pose.orientation = Quaternion(*quat)
-
-        odom.pose.covariance[0] = 0.01
-        odom.pose.covariance[7] = 0.01
-        odom.pose.covariance[14] = 99999
-        odom.pose.covariance[21] = 99999
-        odom.pose.covariance[28] = 99999
-        odom.pose.covariance[35] = 0.01
-
-        odom.child_frame_id = 'base_link'
-        odom.twist.twist.linear.x = vx
-        odom.twist.twist.linear.y = 0
-        odom.twist.twist.angular.z = vth
-        odom.twist.covariance = odom.pose.covariance
-
-        self.odom_pub.publish(odom)
-
-
 class Node:
     def __init__(self):
 
@@ -152,9 +49,11 @@ class Node:
                        0x01000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Speed Error Limit"),
                        0x02000000: (diagnostic_msgs.msg.DiagnosticStatus.WARN, "Position Error Limit")}
 
-        # 
-        # Defining stuff
-        #
+    
+
+        ## 
+        ## Defining stuff
+        ##
         
         # Tunable constants of PID, should be live tunable
         self.pidControllers = [PidController(),
@@ -164,11 +63,21 @@ class Node:
                             PidController(),
                             PidController()]
 
+        self.pidControllers[0].setSoftLimits(0, 0)
+        self.pidControllers[1].setSoftLimits(0, 0)
+        self.pidControllers[2].setSoftLimits(0, 0)
+        self.pidControllers[3].setSoftLimits(0, 0)
+        self.pidControllers[4].setSoftLimits(0, 0)
+        self.pidControllers[5].setSoftLimits(0, 0)
+
         # Effects the influence of gravity comp on the arms, should be live tunable
         self.gravityCompNewtonMetersToVoltage = 0
 
+        self.timeSinceCommandRecieved = rospy.get_rostime()   #rospy.Time.now()
 
-
+        ## 
+        ## Setup roboclaw 
+        ##
         rospy.init_node("roboclaw_node")
         rospy.on_shutdown(self.shutdown)
         rospy.loginfo("Connecting to roboclaw")
@@ -177,6 +86,7 @@ class Node:
 
         self.addresses = [int(addr) for addr in rospy.get_param("~addresses", "131,132,133").split(",")]
 
+        # ERIK: Unsure what this is supposed to do. A better check would be to make sure 131, 132, 133 are there?
         if any((addr > 0x87 or addr < 0x80 for addr in self.addresses)):
             rospy.logfatal("Address out of range")
             rospy.signal_shutdown("Address out of range")
@@ -190,22 +100,16 @@ class Node:
             rospy.logdebug(e)
             rospy.signal_shutdown("Could not connect to Roboclaw")
 
-        # We have a single 'roboclaw' object handling serial communications.
-        # We're about to launch different threads that each want to talk.
-        # 1 - Diagnostics thread calling into our self.check_vitals
-        # 2 - '/cmd_vel' thread calling our self.cmd_vel_callback
-        # 3 - our self.run that publishes to '/odom'
-        # To prevent thread collision in the middle of serial communication
-        # (which causes sync errors) all access to roboclaw from now
-        # must be synchronized using this mutually exclusive lock object.
-        self.mutex = threading.Lock()
 
+        # This is no longer needed. But maybe a diagostic updater would be helpful still??
+        """
         self.updater = diagnostic_updater.Updater()
         self.updater.setHardwareID("Roboclaw")
-
+        
         for address in self.addresses:
             self.updater.add(diagnostic_updater.
                             FunctionDiagnosticTask(f"[{address}] Vitals", partial(self.check_vitals, address=address)))
+        """
 
         versions = []
         for address in self.addresses:
@@ -222,84 +126,45 @@ class Node:
             else:
                 rospy.logdebug(repr(version[1]))
 
-        for address in self.addresses:
-            with self.mutex:
-                self.roboclaw.SpeedM1M2(address, 0, 0)
-                self.roboclaw.ResetEncoders(address)
+        self.stopMotors()
 
-        self.MAX_SPEED = float(rospy.get_param("~max_speed", "2.0"))
-        self.TICKS_PER_METER = float(rospy.get_param("~ticks_per_meter", "4342.2"))
-        self.BASE_WIDTH = float(rospy.get_param("~base_width", "0.315"))
+        # self.MAX_SPEED = float(rospy.get_param("~max_speed", "2.0"))
+        # self.TICKS_PER_METER = float(rospy.get_param("~ticks_per_meter", "4342.2"))
+        # self.BASE_WIDTH = float(rospy.get_param("~base_width", "0.315"))
 
-        self.encodm = EncoderOdom(self.TICKS_PER_METER, self.BASE_WIDTH)
-        self.last_set_speed_time = rospy.get_rostime()
+        rospy.Subscriber("cmd_arm", Pose, self.cmd_arm_callback)
+        rospy.Subscriber("cmd_arm_setVoltage", Pose, self.cmd_setVoltage_callback) # ERIK: Change Pose msg to 6 voltage values
+        rospy.Subscriber("arm_setPID", Pose, self.setPID) # ERIK: Change Pose msg. Need to set P, I, D, IZone, InvertOutput, InvertEncoder, EncoderOffset -> for a specific motor (address and M1 or M2)
 
-        rospy.Subscriber("cmd_vel", Twist, self.cmd_vel_callback)
+        self.angles_pub = rospy.Publisher('/armAngles', Odometry, queue_size=10) # ERIK: Need to figure out the message here. 6 radian values
+        self.pose_pub = rospy.Publisher('/armPose', Pose, queue_size=10)
 
         rospy.sleep(1)
 
         rospy.logdebug("dev %s", dev_name)
         rospy.logdebug("baud %d", baud_rate)
         rospy.logdebug("addresses %d", ",".join(self.addresses))
-        rospy.logdebug("max_speed %f", self.MAX_SPEED)
-        rospy.logdebug("ticks_per_meter %f", self.TICKS_PER_METER)
-        rospy.logdebug("base_width %f", self.BASE_WIDTH)
 
-    def run(self):
-        rospy.loginfo("Starting motor drive")
-        r_time = rospy.Rate(10)
+    # This runs a heartbeat monitor so that if a command is not sent within given period of time, it stops the motors from moving
+    def run(self): 
+        r_time = rospy.Rate(5) # Every 0.2s, do a check
         while not rospy.is_shutdown():
-
+            # If 1 second has pasted with no command, stop the motors from running
             if (rospy.get_rostime() - self.last_set_speed_time).to_sec() > 1:
                 rospy.loginfo("Did not get command for 1 second, stopping")
-                for address in self.addresses:
-                    with self.mutex:
-                        try:
-                            self.roboclaw.ForwardM1(address, 0)
-                            self.roboclaw.ForwardM2(address, 0)
-                        except OSError as e:
-                            rospy.logerr(f"[{address}] Could not stop")
-                            rospy.logdebug(e)
+                self.stopMotors()
 
-            # TODO need find solution to the OSError11 looks like sync problem with serial
-            status1, enc1, crc1 = None, None, None
-            status2, enc2, crc2 = None, None, None
-
-            try:
-                with self.mutex:
-                    status1, enc1, crc1 = self.roboclaw.ReadEncM1(self.addresses[0])
-            except ValueError:
-                pass
-            except OSError as e:
-                rospy.logwarn("ReadEncM1 OSError: %d", e.errno)
-                rospy.logdebug(e)
-
-            try:
-                with self.mutex:
-                    status2, enc2, crc2 = self.roboclaw.ReadEncM2(self.addresses[0])
-            except ValueError:
-                pass
-            except OSError as e:
-                rospy.logwarn("ReadEncM2 OSError: %d", e.errno)
-                rospy.logdebug(e)
-
-            if (isinstance(enc1,Number) and isinstance(enc2,Number)):
-                rospy.logdebug("Encoders %d %d" % (enc1, enc2))
-                self.encodm.update_publish(enc2, enc1) # update_publish(enc_left, enc_right)
-
-                self.updater.update()
             r_time.sleep()
 
-    def cmd_arm_callback(self, pose):
-        self.last_set_speed_time = rospy.get_rostime()
+    # This updates the heartbeat monitor so it knows it has received a command recently
+    def feedMonitor(self):
+        self.timeSinceCommandRecieved = rospy.get_rostime()
 
+    def cmd_arm_callback(self, pose):
         encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
         gearReduction = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
-        invertMotorDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
         invertEncoderDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
-        maxVoltage = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
-        maxMotorAngle = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
-        minMotorAngle = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
+
 
         additionalMassOnEndEffector = 0 # Need to figure out how to make this an input
 
@@ -308,84 +173,186 @@ class Node:
         # Ensure values calculated do not go beyond mechanical endstops
         i = 0
         for angle in motorAngles:
-            angle = self.clampValue(angle, minMotorAngle[i], maxMotorAngle[i])
+            lowLimit, highLimit = self.pidControllers[i].getSoftLimits()
+            angle = self.clampValue(angle, lowLimit, highLimit)
             i += 1
 
-
+        # Calculate gravity compensation
         gravityCompVolts = gravityCompensation(motorAngles, additionalMassOnEndEffector, self.gravityCompNewtonMetersToVoltage)
         
+        #rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
 
-        # rospy.logdebug("vr_ticks:%d vl_ticks: %d", vr_ticks, vl_ticks)
+        ##
+        ## Loop through each roboclaw
+        ##
+
+        # Prepare to store all encoder positions
+        encoderRadians = [0, 0, 0, 0, 0, 0]
         i = 0
         for address in self.addresses:
+            
+
+            ##
+            ## Check vitals. A basic 'motor controller is ok' check
+            ##
+
+            # Get error reported from roboclaw and log it
+            statusMessage = ""
             try:
-                with self.mutex:
-                    encoderCount1 = self.roboclaw.ReadEncM1(address) * invertEncoderDirection[i]
-                    encoderCount2 = self.roboclaw.ReadEncM2(address) * invertEncoderDirection[i+1]
-
-                    setpoint1 = motorAngles[i]
-                    feedback1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]  # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
-                    voltage1 = (self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
-                                * invertMotorDirection[i])
-
-                    setpoint2 = motorAngles[i+1]
-                    feedback2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]   # GET ENCODER VALUE FROM ROBOCLAW & CONVERT TO RADIANS
-                    voltage2 = (self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
-                                * invertMotorDirection[i+1])
-
-                    voltage1 = self.clampVoltage(voltage1, -maxVoltage[i], maxVoltage[i])
-                    voltage2 = self.clampVoltage(voltage2, -maxVoltage[i+1], maxVoltage[i+1])
-
-                    self.setRoboclawVoltage(self.roboclaw, address, voltage1, voltage2)
-                    
+                errorCode = self.roboclaw.ReadError(address)[1]
             except OSError as e:
-                rospy.logwarn(f"[{address}] SpeedM1M2 OSError: {e.errno}")
+                rospy.logwarn(f"[{address}] Diagnostics OSError: {e.errno}")
+                rospy.logdebug(e)
+
+            state, message = self.ERRORS[errorCode]
+            statusMessage.summary(state, f"[{address}] {message}")
+
+            # Store info about the voltage input to the roboclaw and board temperature 1 and 2
+            try:
+                # MainBatteryVoltage/10 to get volts
+                mainBatteryVoltage = self.roboclaw.ReadMainBatteryVoltage(address)[1] / 10
+
+                statusMessage.add("Main Batt V:", float(mainBatteryVoltage))
+                statusMessage.add("Logic Batt V:", float(self.roboclaw.ReadLogicBatteryVoltage(address)[1] / 10))
+                statusMessage.add("Temp1 C:", float(self.roboclaw.ReadTemp(address)[1] / 10))
+                statusMessage.add("Temp2 C:", float(self.roboclaw.ReadTemp2(address)[1] / 10))
+            except OSError as e:
+                rospy.logwarn(f"[{address}] Diagnostics OSError: {e.errno}")
+                rospy.logdebug(e)
+            
+            # ERIK: statusMessage contains a ton of information about the current status of the arm. Idk how to make that available to read.
+
+            ##
+            ## Store all encoder positions
+            ##
+            try:
+                encoderCount1 = self.roboclaw.ReadEncM1(address)[1] * invertEncoderDirection[i]
+            except OSError as e:
+                rospy.logwarn(f"[{address}] ReadEncM1 OSError: {e.errno}")
                 rospy.logdebug(e) 
-                #TODO: add more error tracking for each roboclaw call
+            
+            try:
+                encoderCount2 = self.roboclaw.ReadEncM2(address)[1] * invertEncoderDirection[i+1]
+            except OSError as e:
+                rospy.logwarn(f"[{address}] ReadEncM2 OSError: {e.errno}")
+                rospy.logdebug(e) 
 
-            i += 1
+            encoderRadians1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]
+            encoderRadians2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]
 
-    # TODO: Need to make this work when more than one error is raised
-    def check_vitals(self, stat, address):
+            encoderRadians[i] = encoderRadians1
+            encoderRadians[i+1] = encoderRadians2
+
+            ##
+            ## Calculate PID + gravity compensation
+            ## Convert voltage to duty cycle and send command to roboclaw
+            ##
+
+            # Calculate grav comp and PID for motor 1
+            setpoint1 = motorAngles[i]
+            feedback1 = encoderRadians1
+            voltage1 = (self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i]))
+
+            # Calculate grav comp and PID for motor 2
+            setpoint2 = motorAngles[i+1]
+            feedback2 = encoderRadians2
+            voltage2 = (self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1]))
+
+            # 32767 is 100% duty cycle (15 bytes)
+            dutyCycle1 = voltage1 / mainBatteryVoltage * 32767
+            dutyCycle2 = voltage2 / mainBatteryVoltage * 32767
+
+            # Send the command to the roboclaw
+            try:
+                self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
+            except OSError as e:
+                rospy.logwarn(f"[{address}] DutyM1M2 OSError: {e.errno}")
+                rospy.logdebug(e) 
+
+            # Feed so the heartbeat monitor knows it got a pulse 
+            self.feedMonitor()
+
+            # Iterate the loop
+            i += 2
+
+        ## 
+        ## Forward kinematics
+        ## ERIK: This needs work... and math...
+        ##
+        
+        # Publish motor angles
+        self.angles_pub.publish(motorAngles)
+
+        # Publish Forward Kinematics
+        self.pose_pub.publish() # Pose here
+
+    def cmd_setVoltage_callback(self, Pose): # CHANGE POSE
+        voltages = [0, 0, 0, 0, 0 ,0]
+
+        i = 0
+        for address in self.addresses:
+
+            try:
+                # MainBatteryVoltage/10 to get volts
+                mainBatteryVoltage = self.roboclaw.ReadMainBatteryVoltage(address)[1] / 10
+            except OSError as e:
+                rospy.logwarn(f"[{address}] Diagnostics OSError: {e.errno}")
+                rospy.logdebug(e)
+
+            # 32767 is 100% duty cycle (15 bytes)
+            dutyCycle1 = voltages[i] / mainBatteryVoltage * 32767
+            dutyCycle2 = voltages[i+1] / mainBatteryVoltage * 32767
+
+            # Send the command to the roboclaw
+            try:
+                self.roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
+            except OSError as e:
+                rospy.logwarn(f"[{address}] DutyM1M2 OSError: {e.errno}")
+                rospy.logdebug(e) 
+
+            # Feed so the heartbeat monitor knows it got a pulse 
+            self.feedMonitor()
+
+            i += 2
+
+
+
+
+    
+
+    # This will stop the motors until the topic receives a new value
+    def stopMotors(self, address):
         try:
-            status = self.roboclaw.ReadError(address)[1]
+            self.roboclaw.DutyM1M2(address, 0, 0)
         except OSError as e:
-            rospy.logwarn(f"[{address}] Diagnostics OSError: {e.errno}")
+            rospy.logwarn(f"[{address}] stopMotors DutyM1M2 OSError: {e.errno}")
             rospy.logdebug(e)
-            return
-        state, message = self.ERRORS[status]
-        stat.summary(state, f"[{address}] {message}")
-        try:
-            stat.add("Main Batt V:", float(self.roboclaw.ReadMainBatteryVoltage(address)[1] / 10))
-            stat.add("Logic Batt V:", float(self.roboclaw.ReadLogicBatteryVoltage(address)[1] / 10))
-            stat.add("Temp1 C:", float(self.roboclaw.ReadTemp(address)[1] / 10))
-            stat.add("Temp2 C:", float(self.roboclaw.ReadTemp2(address)[1] / 10))
-        except OSError as e:
-            rospy.logwarn(f"[{address}] Diagnostics OSError: {e.errno}")
-            rospy.logdebug(e)
-        return stat
 
-    # TODO: need clean shutdown so motors stop even if new msgs are arriving
+    # Stops all motors until the topic receives a new value
+    def stopMotors(self):
+        for address in self.addresses:
+            self.stopMotors(address)
+
+    # ERIK: I want to write a shutdown system that's different than a temporary stop (ie prevents further action until told otherwise)
     def shutdown(self):
         rospy.loginfo("Shutting down")
         for address in self.addresses:
             try:
-                with self.mutex:
-                    self.roboclaw.ForwardM1(address, 0)
-                    self.roboclaw.ForwardM2(address, 0)
+                self.roboclaw.ForwardM1(address, 0)
+                self.roboclaw.ForwardM2(address, 0)
             except OSError:
                 rospy.logerr(f"[{address}] Shutdown did not work trying again")
                 try:
-                    with self.mutex:
-                        self.roboclaw.ForwardM1(address, 0)
-                        self.roboclaw.ForwardM2(address, 0)
+                    self.roboclaw.ForwardM1(address, 0)
+                    self.roboclaw.ForwardM2(address, 0)
                 except OSError as e:
                     rospy.logerr(f"[{address}] Could not shutdown motors!!!!")
                     rospy.logdebug(e)
 
-    # 
-    # Helper methods
-    # 
+
+    ##
+    ## Helper methods
+    ##
 
     # Clamp the voltage so it doesn't exceed a given max value
     def clampValue(self, value, minValue, maxValue):
@@ -395,16 +362,6 @@ class Node:
             return minValue
 
         return value
-
-    # Convert voltage to dutycycle and pass on to both motors attached to the roboclaw
-    def setRoboclawVoltage(self, roboclaw:Roboclaw, address:int, voltage1, voltage2):
-
-        # MainBatteryVoltage/10 to get volts. 32767 is 100% duty cycle
-        mainBatteryVoltage = roboclaw.ReadMainBatteryVoltage(address)
-        dutyCycle1 = voltage1 / (mainBatteryVoltage / 10) * 32767
-        dutyCycle2 = voltage2 / (mainBatteryVoltage / 10) * 32767
-
-        roboclaw.DutyM1M2(address, dutyCycle1, dutyCycle2)
 
 
 
@@ -417,13 +374,28 @@ if __name__ == "__main__":
     rospy.loginfo("Exiting")
 
 
+    
 
 
 
 
+#LeftOvers from drivetrain roboclaw node that may still be useful
+
+"""
+@staticmethod
+    def normalize_angle(angle):
+        while angle > pi:
+            angle -= 2.0 * pi
+        while angle < -pi:
+            angle += 2.0 * pi
+        return angle
 
 
 
+rospy.Time.now()
+
+
+"""
 
 
 """
@@ -434,19 +406,21 @@ IDEA/TODO
 3. Organize constants
 4. Create a spreadsheet of all constants
 5. Define the PidControllers with values in rospy.param
-6. Replace drivetrain odometry with arm forward kinematics
+6. ~~DONE~~ Replace drivetrain odometry with arm forward kinematics
 7. ~~DONE~~ Add a way to cap the output of the pid controller (currently could ask the roboclaw for >100% duty cycle)
-8. Add a way to send a voltage value to a motor (for testing and tuning)
-                ~~DONE~~Move the voltage math from the cmd_arm_callback into a method so both can use it
+8. ~~DONE~~Add a way to send a voltage value to a motor (for testing and tuning)
 9. Create a control logic for the arm. Disabled, Home, SetVoltages, SetPose 
                 Home: Go to a nice position to turn off at
-10. Add a system to check that the values from inverse kinematics are within the range of the hardware
-11. Subscribe to a topic to send voltage values to the roboclaws
-12. Create soft limits. If the motor is outside a soft limit and moving in a direction farther away then prevent the motor
+10. ~~DONE~~ Add a system to check that the values from inverse kinematics are within the range of the hardware
+11. ~~DONE~~Subscribe to a topic to send voltage values to the roboclaws
+            Still need to change the MSG
+12. ~~DONE~~ Create soft limits. If the motor is outside a soft limit and moving in a direction farther away then prevent the motor
                 from moving (set duty cycle to 0).
-13. Create a safety feature so that if a the cmd_arm topic or cmd_arm_voltage topic are not given a value within 0.5s, 
+13. ~~DONE~~Create a safety feature so that if a the cmd_arm topic or cmd_arm_voltage topic are not given a value within 0.5s, 
                 stop the motor from moving (duty cycle to 0)
 14. Modify the end effector angles based on the turret angle
+15. Make sure encoders are setup correctly (do they need to be reset? I hope not. They should be set once or they I need an offset to redefine what 0 to the encoder means)
+                What's really important here is that what the encoder defines as 0 matches what the kinematics defines as 0. Likely horizontal, front facing is 0.
 
 
 
