@@ -128,9 +128,11 @@ class Node:
 
         self.stopMotors()
 
-        # self.MAX_SPEED = float(rospy.get_param("~max_speed", "2.0"))
-        # self.TICKS_PER_METER = float(rospy.get_param("~ticks_per_meter", "4342.2"))
-        # self.BASE_WIDTH = float(rospy.get_param("~base_width", "0.315"))
+        """ Keeping this temporarily to reference for the get_param
+        self.MAX_SPEED = float(rospy.get_param("~max_speed", "2.0"))
+        self.TICKS_PER_METER = float(rospy.get_param("~ticks_per_meter", "4342.2"))
+        self.BASE_WIDTH = float(rospy.get_param("~base_width", "0.315"))
+        """
 
         rospy.Subscriber("cmd_arm", Pose, self.cmd_arm_callback)
         rospy.Subscriber("cmd_arm_setVoltage", Pose, self.cmd_setVoltage_callback) # ERIK: Change Pose msg to 6 voltage values
@@ -150,7 +152,7 @@ class Node:
         r_time = rospy.Rate(5) # Every 0.2s, do a check
         while not rospy.is_shutdown():
             # If 1 second has pasted with no command, stop the motors from running
-            if (rospy.get_rostime() - self.last_set_speed_time).to_sec() > 1:
+            if (rospy.get_rostime() - self.timeSinceCommandRecieved).to_sec() > 1:
                 rospy.loginfo("Did not get command for 1 second, stopping")
                 self.stopMotors()
 
@@ -188,6 +190,8 @@ class Node:
 
         # Prepare to store all encoder positions
         encoderRadians = [0, 0, 0, 0, 0, 0]
+        encoderRaw = [0, 0, 0, 0, 0, 0]
+
         i = 0
         for address in self.addresses:
             
@@ -210,9 +214,9 @@ class Node:
             # Store info about the voltage input to the roboclaw and board temperature 1 and 2
             try:
                 # MainBatteryVoltage/10 to get volts
-                mainBatteryVoltage = self.roboclaw.ReadMainBatteryVoltage(address)[1] / 10
+                mainBatteryVoltage = float(self.roboclaw.ReadMainBatteryVoltage(address)[1] / 10)
 
-                statusMessage.add("Main Batt V:", float(mainBatteryVoltage))
+                statusMessage.add("Main Batt V:", mainBatteryVoltage)
                 statusMessage.add("Logic Batt V:", float(self.roboclaw.ReadLogicBatteryVoltage(address)[1] / 10))
                 statusMessage.add("Temp1 C:", float(self.roboclaw.ReadTemp(address)[1] / 10))
                 statusMessage.add("Temp2 C:", float(self.roboclaw.ReadTemp2(address)[1] / 10))
@@ -226,13 +230,13 @@ class Node:
             ## Store all encoder positions
             ##
             try:
-                encoderCount1 = self.roboclaw.ReadEncM1(address)[1] * invertEncoderDirection[i]
+                encoderCount1 = float(self.roboclaw.ReadEncM1(address)[1]) * invertEncoderDirection[i]
             except OSError as e:
                 rospy.logwarn(f"[{address}] ReadEncM1 OSError: {e.errno}")
                 rospy.logdebug(e) 
             
             try:
-                encoderCount2 = self.roboclaw.ReadEncM2(address)[1] * invertEncoderDirection[i+1]
+                encoderCount2 = float(self.roboclaw.ReadEncM2(address)[1]) * invertEncoderDirection[i+1]
             except OSError as e:
                 rospy.logwarn(f"[{address}] ReadEncM2 OSError: {e.errno}")
                 rospy.logdebug(e) 
@@ -242,6 +246,9 @@ class Node:
 
             encoderRadians[i] = encoderRadians1
             encoderRadians[i+1] = encoderRadians2
+
+            encoderRaw[i] = encoderCount1
+            encoderRaw[i+1] = encoderCount2
 
             ##
             ## Calculate PID + gravity compensation
