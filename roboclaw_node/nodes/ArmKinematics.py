@@ -53,6 +53,81 @@ def calculate_joint_state(pose: Point):
     return [base_angle, shoulder_angle, elbow_angle]
 
 
+
+def calculateEndEffectorAngles(pose: Pose, bottomAngles):
+    endEffectorAngles = euler_from_quaternion(pose.quaternion)
+    pitch = 0
+    roll = 0
+    yaw = 0
+
+    turret = bottomAngles[0]
+    shoulder = bottomAngles[1]
+    elbow = bottomAngles[2]
+
+    point = [pose.point.x, pose.point.y, pose.point.z]
+
+    ## Wrist angle. Angle between endeffector and carbon fiber tube
+    arm1Vector = vectorFromAngles(shoulder, turret, 0.3251)
+    arm12OffsetVector = vectorFromAngles(elbow-shoulder+81.534213, turret, 0.07199)
+
+    arm2Vector = vectorSubtraction(vectorAddition(arm1Vector, arm12OffsetVector), point)
+
+    arm2UnitVector = unitVector(arm2Vector)
+
+    endEffectorUnitVector = [math.cos(pitch)*math.cos(yaw), 
+                             math.cos(pitch)*math.sin(yaw),
+                             math.sin(pitch)]
+
+    wrist = angleBetweenUnitVectors(arm2UnitVector, endEffectorUnitVector)
+
+
+    ## Carbon fiber tube motor angle. Rotation along axis of the carbon fiber tube
+    # Point projected onto a plane. (point - dotproduct(point, normal) * normal)
+    projectedPoint = vectorSubtraction(endEffectorUnitVector, vectorScalarMultiplication(arm2UnitVector, dotProduct(endEffectorUnitVector, arm2UnitVector)))
+
+    offsetPoint = [pose.x, pose.y, pose.z+1]
+
+    projectedOffsetPoint = vectorSubtraction(offsetPoint, vectorScalarMultiplication(arm2UnitVector, dotProduct(offsetPoint, arm2UnitVector)))
+
+    tubeTwistAngle = angleBetweenUnitVectors(unitVector(projectedOffsetPoint), unitVector(projectedPoint))
+
+    return [tubeTwistAngle, wrist, roll]
+
+def vectorFromAngles(angleXY, angleZ, length):
+    return [length*math.cos(angleZ)*math.cos(angleXY), 
+            length*math.cos(angleZ)*math.sin(angleXY),
+            length*math.sin(angleZ)]
+
+def vectorAddition(vector1, vector2):
+    return [vector1[0]+vector2[0], vector1[1]+vector2[1], vector1[2]+vector2[2]]
+
+def vectorSubtraction(vector1, vector2):
+    return [vector1[0]-vector2[0], vector1[1]-vector2[1], vector1[2]-vector2[2]]
+
+def vectorScalarMultiplication(vector1, scalar):
+    return [vector1[0]*scalar, vector1[1]*scalar, vector1[2]*scalar]
+
+def unitVector(vector):
+    magnitude = math.hypot(vector[0], vector[1], vector[2])
+
+    return [vector[0]/magnitude,
+            vector[1]/magnitude,
+            vector[2]/magnitude]
+
+def angleBetweenUnitVectors(vector1, vector2):
+    # Cross product between unit vectors
+
+    crossProductVector = [vector1[1]*vector2[2]-vector1[2]*vector2[1],
+                          vector1[2]*vector2[0]-vector1[0]*vector2[2],
+                          vector1[0]*vector2[1]-vector1[1]*vector2[0]]
+
+    crossProductMagnitude = math.hypot(crossProductVector[0], crossProductVector[1], crossProductVector[2])
+
+    return math.sin(crossProductMagnitude)
+
+def dotProduct(vector1, vector2):
+    return vector1[0]*vector2[0] + vector1[1]*vector2[1] + vector1[2]*vector2[2]
+
 def inverseKinematics(pose:Pose):
     motorAngles = [0,0,0,0,0,0]
 
@@ -64,13 +139,12 @@ def inverseKinematics(pose:Pose):
     motorAngles[2] = bottomAngles[2]
 
 
-    # A pose object has a quaternion as part of it. 
-    # Gonna borrow 3 of the 4 float64 in the quaternion as the motor angles
-    # x = motor 3 (carbon fibre tube), y = motor 4 (wrist), z = motor 5 (spinny end effector)
-    motorAngles[3] = pose.orientation.x
-    motorAngles[4] = pose.orientation.y
-    motorAngles[5] = pose.orientation.z
+    endEffectorAngles = calculateEndEffectorAngles(pose, bottomAngles)
 
+    # x = motor 3 (carbon fibre tube), y = motor 4 (wrist), z = motor 5 (spinny end effector)
+    motorAngles[3] = endEffectorAngles[0]
+    motorAngles[4] = endEffectorAngles[1]
+    motorAngles[5] = endEffectorAngles[2]
 
 
 
