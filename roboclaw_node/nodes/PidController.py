@@ -1,5 +1,5 @@
 
-# Math bits got from Rev robotics and ported into python
+# Math bits got from Rev robotics sparkmax and ported into python
 # https://docs.revrobotics.com/sparkmax/operating-modes/closed-loop-control
 
 class PidController:
@@ -109,4 +109,35 @@ class PidController:
             return minValue
 
         return value
+
+
+
+    ##
+    ## Individual Setters
+    ##
+    def setP(self, value):
+        self.kP = value
+
+    def setI(self, value):
+        self.kI = value
+
+    def setD(self, value):
+        self.kD = value
+
+    def setIZone(self, value):
+        self.kIZone = value
+
+    def setInvertOutput(self, boolean):
+        self.kInvertOutput = boolean
+
+    def setMaxOutput(self, value):
+        self.kMaxOutput = value
+
+    def setSoftLimitLow(self, value):
+        self.softLimitLow = value
+
+    def setSoftLimitHigh(self, value):
+        self.softLimitHigh = value
+
+
 

@@ -1,4 +1,5 @@
 #!/usr/bin/env python
+from json import encoder
 from math import pi, cos, sin
 import threading
 from functools import partial
@@ -19,6 +20,7 @@ from ArmKinematics import inverseKinematics
 from GravityCompensation import gravityCompensation
 
 __author__ = "bwbazemore@uga.edu (Brad Bazemore)"
+
 
 
 # TODO need to find some better was of handling OSerror 11 or preventing it, any ideas?
@@ -144,10 +146,10 @@ class Node:
         self.BASE_WIDTH = float(rospy.get_param("~base_width", "0.315"))
         """
 
-        rospy.Subscriber("arm_state", Int16, self.arm_state_callback) # ERIK: Idk if this Int16 works
+        rospy.Subscriber("cmd_arm_state", Int16, self.arm_state_callback) # ERIK: Idk if this Int16 works
         rospy.Subscriber("cmd_arm", Pose, self.cmd_arm_callback)
-        rospy.Subscriber("cmd_arm_setVoltage", Pose, self.cmd_setVoltage_callback) # ERIK: Change Pose msg to 6 voltage values
-        rospy.Subscriber("arm_setPID", Pose, self.setPID) # ERIK: Change Pose msg. Need to set P, I, D, IZone, InvertOutput, InvertEncoder, EncoderOffset -> for a specific motor (address and M1 or M2)
+        rospy.Subscriber("arm_setVoltage", Pose, self.cmd_setVoltage_callback) # ERIK: Change Pose msg to 6 voltage values
+        rospy.Subscriber("arm_liveTune", LiveTune, self.callback_liveTune) # ERIK: Change Pose msg. Need to set P, I, D, IZone, InvertOutput, InvertEncoder, EncoderOffset -> for a specific motor (address and M1 or M2)
 
         self.angles_pub = rospy.Publisher('/armAngles', Odometry, queue_size=10) # ERIK: Need to figure out the message here. 6 radian values
         self.pose_pub = rospy.Publisher('/armPose', Pose, queue_size=10)
@@ -202,11 +204,11 @@ class Node:
     def additionalMassOnEndEffector_callback(self, mass):
         self.massOnEndEffector = mass
 
-    # This runs a heartbeat monitor so that if a command is not sent within given period of time, it stops the motors from moving
+    # This runs a heartbeat monitor so that if PID has not recalculated within given period of time, it stops the motors from moving
     def run(self): 
         r_time = rospy.Rate(5) # Every 0.2s, do a check
         while not rospy.is_shutdown():
-            # If 1 second has pasted with no command, stop the motors from running
+            # If 1 second has pasted with no recalculation, stop the motors from running
             if (rospy.get_rostime() - self.timeSinceCommandRecieved).to_sec() > 1:
                 rospy.loginfo("Did not get command for 1 second, stopping")
                 self.stopMotors()
@@ -224,7 +226,8 @@ class Node:
 
             encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
             gearReduction = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
-            invertEncoderDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
+            self.invertEncoderDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
+            self.encoderOffset = [0,0,0,0,0,0]
 
             # self.setpointMotorAngles from cmd_arm_callback(pose)
             motorAngles = self.setpointMotorAngles
@@ -278,19 +281,22 @@ class Node:
                 ## Store all encoder positions
                 ##
                 try:
-                    encoderCount1 = float(self.roboclaw.ReadEncM1(address)[1]) * invertEncoderDirection[i]
+                    encoderCount1 = float(self.roboclaw.ReadEncM1(address)[1]) * self.invertEncoderDirection[i]
                 except OSError as e:
                     rospy.logwarn(f"[{address}] ReadEncM1 OSError: {e.errno}")
                     rospy.logdebug(e) 
                 
                 try:
-                    encoderCount2 = float(self.roboclaw.ReadEncM2(address)[1]) * invertEncoderDirection[i+1]
+                    encoderCount2 = float(self.roboclaw.ReadEncM2(address)[1]) * self.invertEncoderDirection[i+1]
                 except OSError as e:
                     rospy.logwarn(f"[{address}] ReadEncM2 OSError: {e.errno}")
                     rospy.logdebug(e) 
 
                 encoderRadians1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]
                 encoderRadians2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]
+
+                encoderRadians1 = encoderRadians1 + self.encoderOffset[i]
+                encoderRadians2 = encoderRadians2 + self.encoderOffset[i+1]
 
                 encoderRadians[i] = encoderRadians1
                 encoderRadians[i+1] = encoderRadians2
@@ -380,6 +386,44 @@ class Node:
             i += 2
 
     
+    def callback_liveTune(self, message: LiveTune):
+        #P, I, D, IZone, InvertOutput, InvertEncoder, EncoderOffset -> for a specific motor (address and M1 or M2)
+        """ LiveTune message
+        
+        int armMotorNumber   (0 to 5)
+        string command
+        float value
+
+        Types of commands:
+
+        "p", "i", "d" or "iZ"    changes the values of the constants for PID + IZone
+        
+        "mI", "eI" or "eO"   sets the values for motorInvert, encoderInvert and encoderOffset     
+
+        "gc"  sets gravity compensation constant
+        """
+
+        if (message.command == "p"):
+            self.pidControllers[message.armMotorNumber].setP = message.value
+        elif (message.command == "i"):
+            self.pidControllers[message.armMotorNumber].setI = message.value
+        elif (message.command == "d"):
+            self.pidControllers[message.armMotorNumber].setD = message.value
+        elif (message.command == "iZ"):
+            self.pidControllers[message.armMotorNumber].setIZone = message.value
+
+        elif (message.command == "mI"):
+            self.pidControllers[message.armMotorNumber].setInvertOutput = (message.value == 1) # 0 = false, 1 = true
+        elif(message.command == "eI"):
+            self.invertEncoderDirection[message.armMotorNumber] = int(message.value)
+        elif(message.command == "eO"):
+            self.encoderOffset[message.armMotorNumber] = message.value
+        
+        elif(message.command == "gc"):
+            self.gravityCompNewtonMetersToVoltage = message.value
+
+
+
 
     # This will stop the motors until the topic receives a new value
     def stopMotors(self, address):
@@ -433,7 +477,6 @@ class Node:
             i+=1
 
         return True
-
 
 if __name__ == "__main__":
     try:
