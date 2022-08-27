@@ -43,7 +43,11 @@ class PidController:
         return self.softLimitLow, self.softLimitHigh
 
     # Setpoint and feedback should be PID units
-    def calculate(self, setpoint, feedback, arbFF):
+    def calculate(self, setpoint:float, feedback:float, arbFF:float) -> float:
+        # Ensure the setpoint is within soft limits if it's enabled
+        if (self.softLimitEnabled):
+            setpoint = self.clampValue(setpoint, self.softLimitLow, self.softLimitHigh)
+            
         # Error
         error = setpoint - feedback
 
@@ -51,7 +55,7 @@ class PidController:
         p = error * self.kP
 
         # I term
-        if (abs(error) <= self.IZone or self.IZone == 0.0):
+        if (abs(error) <= self.kIZone or self.kIZone == 0.0):
             self.iState = self.iState + (error * self.kI)
         else:
             self.iState = 0
@@ -70,10 +74,6 @@ class PidController:
         # Clamp output to given max value
         output = self.clampValue(output, -self.kMaxOutput, +self.kMaxOutput)
 
-        # Invert the direction if needed
-        if (self.kInvertOutput):
-            output *= -1
-
         # Do soft limits if it's enabled
         if (self.softLimitEnabled):
 
@@ -88,12 +88,16 @@ class PidController:
                 output = 0
                 return output
 
+        # Invert the direction if needed
+        if (self.kInvertOutput):
+            output *= -1
+
         return output
 
 
     
-    def calculate(self, setpoint, feedback):
-        return self.calculate(setpoint, feedback, 0)
+    # def calculate(self, setpoint, feedback):
+    #     return self.calculate(setpoint, feedback, 0)
 
 
 
