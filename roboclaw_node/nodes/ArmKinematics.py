@@ -42,17 +42,84 @@ def calculate_joint_state(pose: Point):
     lower_y_comp = (xy_length*math.sin(base_angle))/math.sin(math.pi/2)
     lower_x_comp = (xy_length*math.sin(math.pi/2-base_angle)) / \
         math.sin(math.pi/2)
-    print("Lower Arm Vector:", lower_x_comp, lower_y_comp, lower_z_comp)
+    # print("Lower Arm Vector:", lower_x_comp, lower_y_comp, lower_z_comp)
 
     # Upper arm:
     upper_z_comp = pose.z - lower_z_comp
     upper_y_comp = pose.y - lower_y_comp
     upper_x_comp = pose.x - lower_x_comp
-    print("Upper arm Vector:", upper_x_comp, upper_y_comp, upper_z_comp)
+    # print("Upper arm Vector:", upper_x_comp, upper_y_comp, upper_z_comp)
 
     return [base_angle, shoulder_angle, elbow_angle]
 
 
+
+
+
+
+# Second attempt at programming the end effect angles
+def calculateEndEffectorAngles2(pose: Pose, bottomAngles: list[3]) -> list[3]:
+    endEffectorAngles = euler_from_quaternion(pose.quaternion)
+    pitch = 0
+    yaw = 0
+    roll = 0
+
+    turret = bottomAngles[0]
+    shoulder = bottomAngles[1]
+    elbow = bottomAngles[2]
+
+    # Modified pitch and yaw to compensate for bottom angle's joints
+    yaw = yaw - turret
+    pitch = pitch - shoulder - (180+elbow)
+
+    # Create vector to point where end effect should point
+    pitchYawVector = vectorFromAngles(yaw, pitch, 1)
+
+    # Project onto Y-Z plane and calculate the angle for the tube to twist
+    tubeTwistAngle = math.atan2(pitchYawVector[1] / pitchYawVector [2])
+
+    # Cosine direction vector the X axis. theta = acos(x/length) but length = 1
+    wrist = math.acos(pitchYawVector[0])
+
+    return [tubeTwistAngle, wrist, roll]
+
+def vectorFromAngles(angleXY, angleZ, length):
+    return [length*math.cos(angleZ)*math.cos(angleXY), 
+            length*math.cos(angleZ)*math.sin(angleXY),
+            length*math.sin(angleZ)]
+
+
+def inverseKinematics(pose:Pose):
+    motorAngles = [0,0,0,0,0,0]
+
+    # Calculate the angles of the turret, joint 1 and joint 2
+    bottomAngles = calculate_joint_state(pose.position)
+
+    motorAngles[0] = bottomAngles[0]
+    motorAngles[1] = bottomAngles[1]
+    motorAngles[2] = bottomAngles[2]
+
+
+    endEffectorAngles = calculateEndEffectorAngles(pose, bottomAngles)
+
+    # x = motor 3 (carbon fibre tube), y = motor 4 (wrist), z = motor 5 (spinny end effector)
+    motorAngles[3] = endEffectorAngles[0]
+    motorAngles[4] = endEffectorAngles[1]
+    motorAngles[5] = endEffectorAngles[2]
+
+    return motorAngles
+
+
+
+
+
+
+
+
+
+##
+## OLD STUFF, USED
+###
 
 def calculateEndEffectorAngles(pose: Pose, bottomAngles):
     endEffectorAngles = euler_from_quaternion(pose.quaternion)
@@ -93,11 +160,6 @@ def calculateEndEffectorAngles(pose: Pose, bottomAngles):
 
     return [tubeTwistAngle, wrist, roll]
 
-def vectorFromAngles(angleXY, angleZ, length):
-    return [length*math.cos(angleZ)*math.cos(angleXY), 
-            length*math.cos(angleZ)*math.sin(angleXY),
-            length*math.sin(angleZ)]
-
 def vectorAddition(vector1, vector2):
     return [vector1[0]+vector2[0], vector1[1]+vector2[1], vector1[2]+vector2[2]]
 
@@ -127,25 +189,3 @@ def angleBetweenUnitVectors(vector1, vector2):
 
 def dotProduct(vector1, vector2):
     return vector1[0]*vector2[0] + vector1[1]*vector2[1] + vector1[2]*vector2[2]
-
-def inverseKinematics(pose:Pose):
-    motorAngles = [0,0,0,0,0,0]
-
-    # Calculate the angles of the turret, joint 1 and joint 2
-    bottomAngles = calculate_joint_state(pose.position)
-
-    motorAngles[0] = bottomAngles[0]
-    motorAngles[1] = bottomAngles[1]
-    motorAngles[2] = bottomAngles[2]
-
-
-    endEffectorAngles = calculateEndEffectorAngles(pose, bottomAngles)
-
-    # x = motor 3 (carbon fibre tube), y = motor 4 (wrist), z = motor 5 (spinny end effector)
-    motorAngles[3] = endEffectorAngles[0]
-    motorAngles[4] = endEffectorAngles[1]
-    motorAngles[5] = endEffectorAngles[2]
-
-
-
-
