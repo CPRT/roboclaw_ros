@@ -60,20 +60,21 @@ class Node:
         ##
 
         # Core variables to run this node
-        self.loopRecalculatePID = False
+        self.loopCalculatePID = False
         self.isHoming = False
-        self.setpointMotorAngles = [0, 0, 0, 0, 0, 0]
         self.HOME_SETPOINT_MOTORANGLES_RAD = [0,0,0,0,0,0]
+        self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
         self.REACHED_SETPOINT_TOLARANCE_RAD = 0.05236
         self.massOnEndEffector = 0
 
         # Tunable constants of PID, should be live tunable
-        self.pidControllers = [PidController(),
-                            PidController(),
-                            PidController(),
-                            PidController(),
-                            PidController(),
-                            PidController()]
+        MAX_VOLTAGE = 12
+        self.pidControllers = [ PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
+                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
+                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
+                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
+                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
+                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE)]
 
         self.pidControllers[0].setSoftLimits(0, 0)
         self.pidControllers[1].setSoftLimits(0, 0)
@@ -81,6 +82,12 @@ class Node:
         self.pidControllers[3].setSoftLimits(0, 0)
         self.pidControllers[4].setSoftLimits(0, 0)
         self.pidControllers[5].setSoftLimits(0, 0)
+
+        self.encoderTicksPerRotation = 0
+        self.gearReduction = [0,0,0,0,0,0] # on encoders
+        self.invertEncoderDirection = [1,1,1,1,1,1]
+        self.encoderOffset = [0,0,0,0,0,0]
+
 
         # Effects the influence of gravity comp on the arms, should be live tunable
         self.gravityCompNewtonMetersToVoltage = 0
@@ -149,7 +156,7 @@ class Node:
         rospy.Subscriber("cmd_arm_state", Int16, self.arm_state_callback) # ERIK: Idk if this Int16 works
         rospy.Subscriber("cmd_arm", Pose, self.cmd_arm_callback)
         rospy.Subscriber("arm_setVoltage", Pose, self.cmd_setVoltage_callback) # ERIK: Change Pose msg to 6 voltage values
-        rospy.Subscriber("arm_liveTune", LiveTune, self.callback_liveTune) # ERIK: Change Pose msg. Need to set P, I, D, IZone, InvertOutput, InvertEncoder, EncoderOffset -> for a specific motor (address and M1 or M2)
+        rospy.Subscriber("arm_liveTune", LiveTune, self.callback_liveTune) # ERIK: Change Pose msg.
 
         self.angles_pub = rospy.Publisher('/armAngles', Odometry, queue_size=10) # ERIK: Need to figure out the message here. 6 radian values
         self.pose_pub = rospy.Publisher('/armPose', Pose, queue_size=10)
@@ -171,20 +178,20 @@ class Node:
     def arm_state_callback(self, state):
         if (state == 0):
             self.stopMotors()
-            self.loopRecalculatePID = False
+            self.loopCalculatePID = False
             self.isHoming = False
 
         if (state == 1):
-            if (self.loopRecalculatePID == False): 
+            if (self.loopCalculatePID == False): 
                 self.startLooping()
-            self.loopRecalculatePID = True
+            self.loopCalculatePID = True
             self.isHoming = True
             self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
 
         if (state == 2):
-            if (self.loopRecalculatePID == False):
+            if (self.loopCalculatePID == False):
                  self.startLooping()
-            self.loopRecalculatePID = True
+            self.loopCalculatePID = True
             self.isHoming = False
 
 
@@ -222,12 +229,7 @@ class Node:
         self.timeSinceCommandRecieved = rospy.get_rostime()
 
     def startLooping(self):
-        while self.loopRecalculatePID == True:
-
-            encoderTicksPerRotation = 0 # CONSTANT DEFINE SOMEWHERE
-            gearReduction = [0,0,0,0,0,0] # CONSTANT DEFINE SOMEWHERE
-            self.invertEncoderDirection = [1,1,1,1,1,1] # CONSTANT DEFINE SOMEWHERE
-            self.encoderOffset = [0,0,0,0,0,0]
+        while self.loopCalculatePID == True:
 
             # self.setpointMotorAngles from cmd_arm_callback(pose)
             motorAngles = self.setpointMotorAngles
@@ -292,8 +294,8 @@ class Node:
                     rospy.logwarn(f"[{address}] ReadEncM2 OSError: {e.errno}")
                     rospy.logdebug(e) 
 
-                encoderRadians1 = encoderCount1 / encoderTicksPerRotation * 2*pi / gearReduction[i]
-                encoderRadians2 = encoderCount2 / encoderTicksPerRotation * 2*pi / gearReduction[i+1]
+                encoderRadians1 = encoderCount1 / self.encoderTicksPerRotation * 2*pi / self.gearReduction[i]
+                encoderRadians2 = encoderCount2 / self.encoderTicksPerRotation * 2*pi / self.gearReduction[i+1]
 
                 encoderRadians1 = encoderRadians1 + self.encoderOffset[i]
                 encoderRadians2 = encoderRadians2 + self.encoderOffset[i+1]
@@ -312,12 +314,12 @@ class Node:
                 # Calculate grav comp and PID for motor 1
                 setpoint1 = motorAngles[i]
                 feedback1 = encoderRadians1
-                voltage1 = (self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i]))
+                voltage1 = self.pidControllers[i].calculate(setpoint1, feedback1, gravityCompVolts[i])
 
                 # Calculate grav comp and PID for motor 2
                 setpoint2 = motorAngles[i+1]
                 feedback2 = encoderRadians2
-                voltage2 = (self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1]))
+                voltage2 = self.pidControllers[i+1].calculate(setpoint2, feedback2, gravityCompVolts[i+1])
 
                 # 32767 is 100% duty cycle (15 bytes)
                 dutyCycle1 = voltage1 / mainBatteryVoltage * 32767
@@ -396,14 +398,26 @@ class Node:
 
         Types of commands:
 
+        "s" or "e" or ""   stops the motors from moving
+
         "p", "i", "d" or "iZ"    changes the values of the constants for PID + IZone
         
         "mI", "eI" or "eO"   sets the values for motorInvert, encoderInvert and encoderOffset     
 
-        "gc"  sets gravity compensation constant
-        """
+        "sH", "sL"   sets the values for softLimits, high and low
 
-        if (message.command == "p"):
+        "gc"  sets gravity compensation constant
+
+        "v" sets a voltage of a given motor
+
+        "rad" sets a radian setpoint for the PID of a given motor
+        """
+        message.command = message.command.lower()
+
+        if (message.command == "s" or message.command == "e" or message.command == ""):
+            self.stopMotors
+
+        elif (message.command == "p"):
             self.pidControllers[message.armMotorNumber].setP = message.value
         elif (message.command == "i"):
             self.pidControllers[message.armMotorNumber].setI = message.value
@@ -419,8 +433,23 @@ class Node:
         elif(message.command == "eO"):
             self.encoderOffset[message.armMotorNumber] = message.value
         
+        elif (message.command == "sH"):
+            self.pidControllers[message.armMotorNumber].setSoftLimitHigh(message.value)
+        elif (message.command == "sL"):
+            self.pidControllers[message.armMotorNumber].setSoftLimitLow(message.value)
+
         elif(message.command == "gc"):
             self.gravityCompNewtonMetersToVoltage = message.value
+
+        elif(message.command == "v"):
+            voltages = [0] * 6
+            voltages[message.armMotorNumber] = message.value
+            # CONVERT VOLTAGE LIST TO 6 RAD VALUE ROS MSG
+            self.cmd_setVoltage_callback(voltages)
+
+        elif(message.command == "rad"):
+            self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
+            self.setpointMotorAngles[message.armMotorNumber] = message.value
 
 
 
@@ -514,26 +543,30 @@ rospy.Time.now()
 """
 IDEA/TODO
 
-1. Subscribe to a topic to update PID values and gravity comp value
+1. ~~DONE~~Subscribe to a topic to update PID values and gravity comp value
 2. ~~DONE~~Write gravity comp
-3. Organize constants
-4. Create a spreadsheet of all constants
-5. Define the PidControllers with values in rospy.param
+3. ~~DONE~~Organize constants
+4. ~~DONE~~Create a spreadsheet of all constants
+
+5. ***Define the PidControllers with values in rospy.param (and other constants)
+
 6. ~~DONE~~ Replace drivetrain odometry with arm forward kinematics
 7. ~~DONE~~ Add a way to cap the output of the pid controller (currently could ask the roboclaw for >100% duty cycle)
 8. ~~DONE~~Add a way to send a voltage value to a motor (for testing and tuning)
-9. Create a control logic for the arm. Disabled, Home, SetVoltages, SetPose 
-                Home: Go to a nice position to turn off at
+9. ~~DONE~~Create a control logic for the arm. Disabled, Home, SetVoltages, SetPose 
+                ~~DONE~~Home: Go to a nice position to turn off at
 10. ~~DONE~~ Add a system to check that the values from inverse kinematics are within the range of the hardware
 11. ~~DONE~~Subscribe to a topic to send voltage values to the roboclaws
-            Still need to change the MSG
+
+***Still need to change the MSG
+
 12. ~~DONE~~ Create soft limits. If the motor is outside a soft limit and moving in a direction farther away then prevent the motor
                 from moving (set duty cycle to 0).
 13. ~~DONE~~Create a safety feature so that if a the cmd_arm topic or cmd_arm_voltage topic are not given a value within 0.5s, 
                 stop the motor from moving (duty cycle to 0)
-14. Modify the end effector angles based on the turret angle
-15. Make sure encoders are setup correctly (do they need to be reset? I hope not. They should be set once or they I need an offset to redefine what 0 to the encoder means)
-                What's really important here is that what the encoder defines as 0 matches what the kinematics defines as 0. Likely horizontal, front facing is 0.
+14. ~~DONE~~Modify the end effector angles based on the turret angle
+15. ~~DONE~~Make sure encoders are setup correctly (do they need to be reset? I hope not. They should be set once or they I need an offset to redefine what 0 to the encoder means)
+                ~~DONE~~What's really important here is that what the encoder defines as 0 matches what the kinematics defines as 0. Likely horizontal, front facing is 0.
 
 
 
