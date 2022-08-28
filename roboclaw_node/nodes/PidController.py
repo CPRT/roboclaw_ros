@@ -3,7 +3,7 @@
 # https://docs.revrobotics.com/sparkmax/operating-modes/closed-loop-control
 
 class PidController:
-    def __init__(self, kInvertOutput, kP, kI, kD, kF, kIZone, kMaxOutput):
+    def __init__(self, kInvertOutput: bool, kP: float, kI: float, kD: float, kF: float, kIZone: float, kMaxOutput: float):
         self.kInvertOutput = kInvertOutput
         self.kP = kP
         self.kI = kI
@@ -19,7 +19,7 @@ class PidController:
         self.softLimitLow = 0
 
     # Max Output should be raw motor output units (voltage usually)
-    def setPIDValues(self, kInvertOutput:bool, kP, kI, kD, kF, kIZone, kMaxOutput):
+    def setPIDValues(self, kInvertOutput: bool, kP: float, kI: float, kD: float, kF: float, kIZone: float, kMaxOutput: float):
         self.kInvertOutput = kInvertOutput
         self.kP = kP
         self.kI = kI
@@ -30,7 +30,7 @@ class PidController:
 
     # Soft limit is meant for position PID only
     # Will prevent movement beyond a limit when the limit is exceeded.
-    def enableSoftLimit(self, enabled:bool):
+    def enableSoftLimit(self, enabled: bool):
         self.softLimitEnabled = enabled
 
     # Limits should be PID units

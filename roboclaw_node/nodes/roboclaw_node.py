@@ -62,34 +62,49 @@ class Node:
         # Core variables to run this node
         self.loopCalculatePID = False
         self.isHoming = False
-        self.HOME_SETPOINT_MOTORANGLES_RAD = [0,0,0,0,0,0]
+        self.HOME_SETPOINT_MOTORANGLES_RAD = [rospy.get_param("~m0_home", 0), rospy.get_param("~m1_home", 0), rospy.get_param("~m2_home", 0),
+                                              rospy.get_param("~m3_home", 0), rospy.get_param("~m4_home", 0),rospy.get_param("~m5_home", 0)]
         self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
         self.REACHED_SETPOINT_TOLERANCE_RAD = 0.05236
         self.massOnEndEffector = 0
 
         # Tunable constants of PID, should be live tunable
-        MAX_VOLTAGE = 12
-        self.pidControllers = [ PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
-                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
-                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
-                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
-                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE),
-                                PidController(False, 0, 0, 0, 0, 0, MAX_VOLTAGE)]
+        self.pidControllers = [ 
+            PidController(rospy.get_param("~m0_mI", False), rospy.get_param("~m0_p", 0), rospy.get_param("~m0_i", 0), rospy.get_param("~m0_d", 0), rospy.get_param("~m0_f", 0), rospy.get_param("~m0_iZ", 0), rospy.get_param("~m0_maxVoltage", 12)),
+            PidController(rospy.get_param("~m1_mI", False), rospy.get_param("~m1_p", 0), rospy.get_param("~m1_i", 0), rospy.get_param("~m1_d", 0), rospy.get_param("~m1_f", 0), rospy.get_param("~m1_iZ", 0), rospy.get_param("~m1_maxVoltage", 12)),
+            PidController(rospy.get_param("~m2_mI", False), rospy.get_param("~m2_p", 0), rospy.get_param("~m2_i", 0), rospy.get_param("~m2_d", 0), rospy.get_param("~m2_f", 0), rospy.get_param("~m2_iZ", 0), rospy.get_param("~m2_maxVoltage", 12)),
+            PidController(rospy.get_param("~m3_mI", False), rospy.get_param("~m3_p", 0), rospy.get_param("~m3_i", 0), rospy.get_param("~m3_d", 0), rospy.get_param("~m3_f", 0), rospy.get_param("~m3_iZ", 0), rospy.get_param("~m3_maxVoltage", 12)),
+            PidController(rospy.get_param("~m4_mI", False), rospy.get_param("~m4_p", 0), rospy.get_param("~m4_i", 0), rospy.get_param("~m4_d", 0), rospy.get_param("~m4_f", 0), rospy.get_param("~m4_iZ", 0), rospy.get_param("~m4_maxVoltage", 12)),
+            PidController(rospy.get_param("~m5_mI", False), rospy.get_param("~m5_p", 0), rospy.get_param("~m5_i", 0), rospy.get_param("~m5_d", 0), rospy.get_param("~m5_f", 0), rospy.get_param("~m5_iZ", 0), rospy.get_param("~m5_maxVoltage", 12))]
 
-        self.pidControllers[0].setSoftLimits(0, 0)
-        self.pidControllers[1].setSoftLimits(0, 0)
-        self.pidControllers[2].setSoftLimits(0, 0)
-        self.pidControllers[3].setSoftLimits(0, 0)
-        self.pidControllers[4].setSoftLimits(0, 0)
-        self.pidControllers[5].setSoftLimits(0, 0)
+        self.pidControllers[0].setSoftLimits(rospy.get_param("~m0_sL", 0), rospy.get_param("~m0_sH", 0))
+        self.pidControllers[1].setSoftLimits(rospy.get_param("~m1_sL", 0), rospy.get_param("~m1_sH", 0))
+        self.pidControllers[2].setSoftLimits(rospy.get_param("~m2_sL", 0), rospy.get_param("~m2_sH", 0))
+        self.pidControllers[3].setSoftLimits(rospy.get_param("~m3_sL", 0), rospy.get_param("~m3_sH", 0))
+        self.pidControllers[4].setSoftLimits(rospy.get_param("~m4_sL", 0), rospy.get_param("~m4_sH", 0))
+        self.pidControllers[5].setSoftLimits(rospy.get_param("~m5_sL", 0), rospy.get_param("~m5_sH", 0))
 
-        self.encoderTicksPerRotation = [0,0,0,0,0,0]
-        self.gearReduction = [0,0,0,0,0,0] # on encoders
+        self.gearReduction = [rospy.get_param("~m0_encGearReduction", 1), rospy.get_param("~m1_encGearReduction", 1), rospy.get_param("~m2_encGearReduction", 1),
+                              rospy.get_param("~m3_encGearReduction", 1), rospy.get_param("~m4_encGearReduction", 1), rospy.get_param("~m5_encGearReduction", 1)]
+
+        self.encoderTicksPerRotation = [rospy.get_param("~m0_eT", 0), rospy.get_param("~m1_eT", 0), rospy.get_param("~m2_eT", 0),
+                                        rospy.get_param("~m3_eT", 0), rospy.get_param("~m4_eT", 0), rospy.get_param("~m5_eT", 0)]
+
+        self.encoderOffset = [rospy.get_param("~m0_eO", 0), rospy.get_param("~m1_eO", 0), rospy.get_param("~m2_eO", 0),
+                              rospy.get_param("~m3_eO", 0), rospy.get_param("~m4_eO", 0), rospy.get_param("~m5_eO", 0)]
+
+        # Invert encoder direction (multiply by 1 or -1) based on boolean from get_param on "~m#_eI"
         self.invertEncoderDirection = [1,1,1,1,1,1]
-        self.encoderOffset = [0,0,0,0,0,0]
+        i = 0
+        for direction in self.invertEncoderDirection:
+            name = "~m" + i + "_eI"
+            if (rospy.get_param(name, False)):
+                direction = -1
+            i += 1
+        
 
 
-        # Effects the influence of gravity comp on the arms, should be live tunable
+        # Effects the influence of gravity comp on the arms, it's live tunable
         self.gravityCompNewtonMetersToVoltage = 0
 
         self.timeSinceCommandRecieved = rospy.get_rostime()   #rospy.Time.now()
@@ -402,7 +417,7 @@ class Node:
 
         "p", "i", "d" or "iZ"    changes the values of the constants for PID + IZone
         
-        "mI", "eI" or "eO"   sets the values for motorInvert, encoderInvert and encoderOffset     
+        "mI", "eI", "eO" or "eT"   sets the values for motorInvert, encoderInvert, encoderOffset and encoderTicksPerRotation     
 
         "sH", "sL"   sets the values for softLimits, high and low
 
@@ -427,11 +442,13 @@ class Node:
             self.pidControllers[message.armMotorNumber].setIZone = message.value
 
         elif (message.command == "mI"):
-            self.pidControllers[message.armMotorNumber].setInvertOutput = (message.value == 1) # 0 = false, 1 = true
+            self.pidControllers[message.armMotorNumber].setInvertOutput = message.value
         elif(message.command == "eI"):
             self.invertEncoderDirection[message.armMotorNumber] = int(message.value)
         elif(message.command == "eO"):
             self.encoderOffset[message.armMotorNumber] = message.value
+        elif(message.command == "eT"):
+            self.encoderTicksPerRotation[message.armMotorNumber] = message.value
         
         elif (message.command == "sH"):
             self.pidControllers[message.armMotorNumber].setSoftLimitHigh(message.value)
