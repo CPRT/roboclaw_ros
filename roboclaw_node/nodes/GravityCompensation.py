@@ -8,26 +8,27 @@ from math import cos
 gravityConstant = 9.81
 
 # Length along the first arm to the centroid of that arm
-lengthCentroid1 = 0
+lengthCentroid1 = 0.344
 
 # Length along the second arm to the centroid of that arm
-lengthCentroid2 = 0
+lengthCentroid2 = 0.254
 
 # Length along the second arm to the centroid the end effector
 # Assumed that the mass of the end effector is along the axis of the second arm
-lengthCentroid3 = 0
+lengthCentroid3 = 0.55
 
 # Length between the first and second joint
-lengthArm1 = 0
+lengthArm1 = 0.325
 
 # Mass of the first arm, between joint 1 and joint 2
-massArm1 = 0
+massArm1 = 1.5
 
 # Mass of the second arm, between joint 2 and joint 3 including between inside the C channel
+# This is purposely 0 for now. 
 massArm2 = 0
 
 # Mass of the end effector
-massEndEffector = 0
+massEndEffector = 1.95
 
 
 
@@ -36,10 +37,11 @@ massEndEffector = 0
 #
 # Calculates and provides a voltage to counteract the influence of gravity on 2 joints
 #
-# PARAM: motorAngles -> 
+# PARAM: motorAngles -> Only the angle of the first and second joint are used.
+# PARAM: additionalMassOnEndEffector -> Any extra mass that is on the end effector and should be compensated for
 # PARAM: newtonMetersToVoltage -> Newton meters of torque converted to voltage, 
 #       also can control how much influence gravity compensation has over the system
-def gravityCompensation(motorAngles, additionalMassOnEndEffector, newtonMetersToVoltage):
+def gravityCompensation(motorAngles: list[6], additionalMassOnEndEffector: float, newtonMetersToVoltage: float):
     result = [0, 0, 0, 0, 0, 0]
 
     # 
@@ -89,6 +91,10 @@ def gravityCompensation(motorAngles, additionalMassOnEndEffector, newtonMetersTo
     #
     # Second joint
     #
+
+    # Move the origin to the second joint
+    xCentroid2 -= xCentroid1
+    xCentroid3 -= xCentroid1
 
     # x coordinate of the summed centroid of all 3 parts
     xCentroidTotal = (((xCentroid2 * massArm2) + (xCentroid3 * totalMassEndEffector)) 

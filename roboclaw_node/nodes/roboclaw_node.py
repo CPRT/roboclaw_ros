@@ -14,7 +14,7 @@ from geometry_msgs.msg import Quaternion, Twist, Pose
 from nav_msgs.msg import Odometry
 from numbers import Number
 
-from std_msgs import Int16 # IDK IF THIS WORKS. Might need to just make my own custom message
+from std_msgs.msg import Int16 # IDK IF THIS WORKS. Might need to just make my own custom message
 
 from ArmKinematics import inverseKinematics
 from GravityCompensation import gravityCompensation
@@ -64,7 +64,7 @@ class Node:
         self.isHoming = False
         self.HOME_SETPOINT_MOTORANGLES_RAD = [0,0,0,0,0,0]
         self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
-        self.REACHED_SETPOINT_TOLARANCE_RAD = 0.05236
+        self.REACHED_SETPOINT_TOLERANCE_RAD = 0.05236
         self.massOnEndEffector = 0
 
         # Tunable constants of PID, should be live tunable
@@ -83,7 +83,7 @@ class Node:
         self.pidControllers[4].setSoftLimits(0, 0)
         self.pidControllers[5].setSoftLimits(0, 0)
 
-        self.encoderTicksPerRotation = 0
+        self.encoderTicksPerRotation = [0,0,0,0,0,0]
         self.gearReduction = [0,0,0,0,0,0] # on encoders
         self.invertEncoderDirection = [1,1,1,1,1,1]
         self.encoderOffset = [0,0,0,0,0,0]
@@ -159,7 +159,7 @@ class Node:
         rospy.Subscriber("arm_liveTune", LiveTune, self.callback_liveTune) # ERIK: Change Pose msg.
 
         self.angles_pub = rospy.Publisher('/armAngles', Odometry, queue_size=10) # ERIK: Need to figure out the message here. 6 radian values
-        self.pose_pub = rospy.Publisher('/armPose', Pose, queue_size=10)
+        # self.pose_pub = rospy.Publisher('/armPose', Pose, queue_size=10)
 
         rospy.sleep(1)
 
@@ -294,8 +294,8 @@ class Node:
                     rospy.logwarn(f"[{address}] ReadEncM2 OSError: {e.errno}")
                     rospy.logdebug(e) 
 
-                encoderRadians1 = encoderCount1 / self.encoderTicksPerRotation * 2*pi / self.gearReduction[i]
-                encoderRadians2 = encoderCount2 / self.encoderTicksPerRotation * 2*pi / self.gearReduction[i+1]
+                encoderRadians1 = encoderCount1 / self.encoderTicksPerRotation[i] * 2*pi / self.gearReduction[i]
+                encoderRadians2 = encoderCount2 / self.encoderTicksPerRotation[i+1] * 2*pi / self.gearReduction[i+1]
 
                 encoderRadians1 = encoderRadians1 + self.encoderOffset[i]
                 encoderRadians2 = encoderRadians2 + self.encoderOffset[i+1]
@@ -347,7 +347,7 @@ class Node:
             self.angles_pub.publish(motorAngles)
 
             # Publish Forward Kinematics
-            self.pose_pub.publish() # Pose here
+            # self.pose_pub.publish() # Pose here
 
 
             if (self.isHoming): 
@@ -449,7 +449,11 @@ class Node:
 
         elif(message.command == "rad"):
             self.setpointMotorAngles = self.HOME_SETPOINT_MOTORANGLES_RAD
-            self.setpointMotorAngles[message.armMotorNumber] = message.value
+
+            lowLimit, highLimit = self.pidControllers[message.armMotorNumber].getSoftLimits()
+            angle = self.clampValue(message.value, lowLimit, highLimit)
+
+            self.setpointMotorAngles[message.armMotorNumber] = angle
 
 
 
@@ -501,7 +505,7 @@ class Node:
     def reachedSetpoint(self, setpoint, motorAngles):
         i = 0
         for angle in motorAngles:
-            if (abs(setpoint[i] - motorAngles[i]) > self.REACHED_SETPOINT_TOLARANCE_RAD):
+            if (abs(setpoint[i] - motorAngles[i]) > self.REACHED_SETPOINT_TOLERANCE_RAD):
                 return False
             i+=1
 

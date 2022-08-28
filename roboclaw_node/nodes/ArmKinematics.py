@@ -2,8 +2,8 @@ from geometry_msgs.msg import Point, Pose, Quaternion
 from tf.transformations import euler_from_quaternion, quaternion_from_euler
 import math
 
-ARM_BASE_LENGTH = 0.30  # m, pivot to pivot
-ARM_UPPER_LENGTH = 0.30  # m, pivot to end-effector axis
+ARM_BASE_LENGTH = 0.325  # m, pivot to pivot
+ARM_UPPER_LENGTH = 0.488831  # m, pivot to end-effector axis
 
 
 def validate_point(pose: Point) -> bool:
@@ -100,7 +100,7 @@ def inverseKinematics(pose:Pose):
     motorAngles[2] = bottomAngles[2]
 
 
-    endEffectorAngles = calculateEndEffectorAngles(pose, bottomAngles)
+    endEffectorAngles = calculateEndEffectorAngles2(pose, bottomAngles)
 
     # x = motor 3 (carbon fibre tube), y = motor 4 (wrist), z = motor 5 (spinny end effector)
     motorAngles[3] = endEffectorAngles[0]
@@ -118,7 +118,7 @@ def inverseKinematics(pose:Pose):
 
 
 ##
-## OLD STUFF, USED
+## OLD STUFF
 ###
 
 def calculateEndEffectorAngles(pose: Pose, bottomAngles):
